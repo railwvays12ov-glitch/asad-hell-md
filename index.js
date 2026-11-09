@@ -84,7 +84,7 @@ async function startBot() {
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr && !PAIR_NUMBER) {
+    if (qr) {
       console.log('WhatsApp > Linked devices > Link a device, ye QR scan karein:');
       qrcode.generate(qr, { small: true });
     }

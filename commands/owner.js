@@ -98,9 +98,9 @@ cmd('blocklist', { desc: 'Block list: blocklist add/remove @user', cat: 'Owner',
   return ctx.reply('Usage: blocklist add/remove @user');
 });
 
-// Owner ki "pair" command: multi-session pairing is is version mein nahi hai
+// Owner ki "pair" command: pairing web page se hoti hai
 cmd('pair', { desc: 'Pairing info', cat: 'Owner', owner: true }, (ctx) =>
-  ctx.reply('ℹ️ Is bot mein session ek hi hai. Pairing ke liye PAIR_NUMBER env variable set karein.'),
+  ctx.reply('ℹ️ Pairing ke liye Railway web page par apna WhatsApp number enter karein.'),
 );
 
 export { randomEmoji, commands };
