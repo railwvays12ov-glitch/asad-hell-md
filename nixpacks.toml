@@ -1,0 +1,6 @@
+# Railway / Nixpacks: sticker, toimg, toptt commands ke liye ffmpeg chahiye
+[phases.setup]
+nixPkgs = ["...", "ffmpeg"]
+
+[start]
+cmd = "npm start"
