@@ -9,7 +9,7 @@ import makeWASocket, {
 import { createServer } from 'node:http';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
-import { BOT_NAME, PAIR_NUMBER, AUTH_DIR, DEV_NUMBER } from './config.js';
+import { BOT_NAME, AUTH_DIR, DEV_NUMBER } from './config.js';
 import { store } from './lib/store.js';
 import { buildCtx, toJid } from './lib/helpers.js';
 import { commands } from './commands/index.js';
@@ -19,17 +19,42 @@ import { afkHook, randomEmoji } from './commands/general.js';
 const MAX_CACHE = 500;
 const msgCache = new Map(); // antidelete ke liye (message id -> info)
 let alwaysTimer = null;
+let activeSocket = null;
+let activeState = null;
+let lastPairRequestAt = 0;
 
-// Railway health/public URL endpoint. The WhatsApp bot remains the main process.
+const pairingPage = `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${BOT_NAME} Pairing</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;font-family:system-ui,sans-serif;background:#111827;color:#f9fafb}main{width:min(100%,430px);padding:28px;border:1px solid #374151;border-radius:20px;background:#1f2937;box-shadow:0 20px 60px #0006}h1{margin:0 0 8px;font-size:25px}p{color:#cbd5e1;line-height:1.5}label{display:block;margin:22px 0 8px;font-weight:700}input,button{width:100%;padding:13px 14px;border-radius:10px;font-size:16px}input{border:1px solid #64748b;background:#111827;color:white}button{margin-top:14px;border:0;background:#22c55e;color:#052e16;font-weight:800;cursor:pointer}button:disabled{opacity:.6;cursor:wait}#result{margin-top:20px;padding:16px;border-radius:12px;background:#0f172a;white-space:pre-wrap}.code{margin:10px 0;font-size:30px;letter-spacing:4px;color:#86efac;font-weight:900;text-align:center}small{color:#94a3b8}</style></head><body><main><h1>${BOT_NAME} WhatsApp Pairing</h1><p>Enter your WhatsApp number with country code, without <b>+</b> or spaces.</p><form id="form"><label for="number">WhatsApp number</label><input id="number" name="number" inputmode="numeric" placeholder="923001234567" minlength="8" maxlength="15" required/><button id="button">Get pairing code</button></form><div id="result"><small>After receiving the code: WhatsApp → Settings → Linked devices → Link a device → Link with phone number.</small></div></main><script>const form=document.getElementById('form'),button=document.getElementById('button'),result=document.getElementById('result');form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;result.textContent='Requesting pairing code…';try{const response=await fetch('/api/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({number:document.getElementById('number').value})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Could not get pairing code');result.innerHTML='<div>Pairing code:</div><div class="code">'+data.code+'</div><small>Enter this code in WhatsApp → Linked devices → Link with phone number.</small>'}catch(error){result.textContent=error.message}finally{button.disabled=false}});</script></body></html>`;
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(body));
+}
+
+// Railway public web page and pairing-code endpoint.
 const port = Number(process.env.PORT || 3000);
-createServer((req, res) => {
-  if (req.url === '/health' || req.url === '/') {
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ ok: true, service: 'Asad Hell MD' }));
-    return;
+createServer(async (req, res) => {
+  if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
+    if (req.url === '/health') return sendJson(res, 200, { ok: true, service: BOT_NAME });
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    return res.end(pairingPage);
   }
-  res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify({ ok: false, error: 'Not found' }));
+  if (req.method === 'POST' && req.url === '/api/pair') {
+    const now = Date.now();
+    if (now - lastPairRequestAt < 30000) return sendJson(res, 429, { error: 'Please wait 30 seconds before requesting another code.' });
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    let number = '';
+    try { number = String(JSON.parse(raw).number || '').replace(/\D/g, ''); } catch { return sendJson(res, 400, { error: 'Invalid request.' }); }
+    if (!/^\d{8,15}$/.test(number)) return sendJson(res, 400, { error: 'Enter a valid number with country code, digits only.' });
+    if (!activeSocket || !activeState) return sendJson(res, 503, { error: 'WhatsApp connection is still starting. Try again in a few seconds.' });
+    if (activeState.creds.registered) return sendJson(res, 409, { error: 'This bot is already paired. Remove auth_info to pair a new number.' });
+    try {
+      lastPairRequestAt = now;
+      const code = await activeSocket.requestPairingCode(number);
+      return sendJson(res, 200, { ok: true, code });
+    } catch (error) { return sendJson(res, 502, { error: `Pairing failed: ${error?.message || error}` }); }
+  }
+  sendJson(res, 404, { ok: false, error: 'Not found' });
 }).listen(port, '0.0.0.0', () => console.log(`🌐 Health server listening on port ${port}`));
 
 process.on('unhandledRejection', (e) => console.error('Unhandled:', e?.message || e));
@@ -43,6 +68,7 @@ function startAlwaysOnline(sock) {
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  activeState = state;
   const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
 
   const sock = makeWASocket({
@@ -52,21 +78,9 @@ async function startBot() {
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
     markOnlineOnConnect: false,
   });
+  activeSocket = sock;
 
   sock.ev.on('creds.update', saveCreds);
-
-  // Pairing code (PAIR_NUMBER set ho to). Railway jaisi hosting par QR ki jagah ye use karein.
-  if (PAIR_NUMBER && !state.creds.registered) {
-    setTimeout(async () => {
-      try {
-        const code = await sock.requestPairingCode(PAIR_NUMBER);
-        console.log(`🔗 PAIRING CODE: ${code}`);
-        console.log('WhatsApp > Linked devices > Link with phone number, ye code enter karein.');
-      } catch (e) {
-        console.error('Pairing code error:', e.message);
-      }
-    }, 3000);
-  }
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr && !PAIR_NUMBER) {
