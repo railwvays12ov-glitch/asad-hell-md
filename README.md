@@ -37,3 +37,5 @@ Sticker, toimg, toptt commands ke liye `ffmpeg` installed hona chahiye.
 
 - Ye bot Baileys (unofficial) par chalta hai. Bulk messages ya spam par WhatsApp number ban ho sakta hai.
 - Download, AI aur screenshot commands bahar ke third-party APIs par depend karte hain. Agar API band ho to ye commands kaam nahi karenge.
+
+Web pairing page enabled.
