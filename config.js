@@ -6,7 +6,10 @@
 export const BOT_NAME = process.env.BOT_NAME || 'Asad Hell MD';
 
 // Owner / developer number (country code ke saath, bina + aur spaces)
-export const DEV_NUMBER = (process.env.OWNER_NUMBER || '923013600709').replace(/\D/g, '');
+export let DEV_NUMBER = (process.env.OWNER_NUMBER || '923013600709').replace(/\D/g, '');
+export function setDevNumber(number) {
+  DEV_NUMBER = String(number || '').replace(/\D/g, '') || DEV_NUMBER;
+}
 export const DEV_NAME = 'Asad';
 export const DEV_TG = '@asad_rajar';
 export const DEV_TG_URL = 'https://t.me/asad_rajar';

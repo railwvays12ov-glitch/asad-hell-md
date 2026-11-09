@@ -9,7 +9,7 @@ import makeWASocket, {
 import { createServer } from 'node:http';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
-import { BOT_NAME, AUTH_DIR, DEV_NUMBER } from './config.js';
+import { BOT_NAME, AUTH_DIR, DEV_NUMBER, setDevNumber } from './config.js';
 import { store } from './lib/store.js';
 import { buildCtx, toJid } from './lib/helpers.js';
 import { commands } from './commands/index.js';
@@ -50,6 +50,7 @@ createServer(async (req, res) => {
     if (activeState.creds.registered) return sendJson(res, 409, { error: 'This bot is already paired. Remove auth_info to pair a new number.' });
     try {
       lastPairRequestAt = now;
+      setDevNumber(number);
       const code = await activeSocket.requestPairingCode(number);
       return sendJson(res, 200, { ok: true, code });
     } catch (error) { return sendJson(res, 502, { error: `Pairing failed: ${error?.message || error}` }); }
@@ -88,6 +89,7 @@ async function startBot() {
       qrcode.generate(qr, { small: true });
     }
     if (connection === 'open') {
+      if (sock.user?.id) setDevNumber(sock.user.id.split(':')[0]);
       console.log(`✅ ${BOT_NAME} connected`);
       startAlwaysOnline(sock);
     }
